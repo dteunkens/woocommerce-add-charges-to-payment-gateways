@@ -76,8 +76,11 @@ class WC_PaymentGateway_Add_Charges{
                 $data += '<th scope="row" class="titledesc">Extra Charges Type</th>';
                 $data += '<td class="forminp">';
                 $data += '<fieldset>';
-                $data += '<select name="<?php echo $extra_charges_type?>"><option <?php if($extra_charges_type_value=="add") echo "selected=selected"?> value="add">Total Add</option>';
+                $data += '<select name="<?php echo $extra_charges_type?>">';
+                $data += '<option <?php if($extra_charges_type_value=="add") echo "selected=selected"?> value="add">Total Add</option>';
                 $data += '<option <?php if($extra_charges_type_value=="percentage") echo "selected=selected"?> value="percentage">Total % Add</option>';
+                $data += '<option <?php if($extra_charges_type_value=="compensatePercentagePlusFixed") echo "selected=selected"?> value="compensatePercentagePlusFixed">Compensate fee (like PayPal fees; format: percentage + pipe symbol + fixed cost, e.g. 3.4|0.35)</option>';
+                $data += '</select>';
                 $data += '<br /></fieldset></td></tr></table>';
                 $('.form-table:last').after($data);
 
@@ -106,16 +109,26 @@ public function calculate_totals( $totals ) {
         $current_gateway_id = $current_gateway -> id;
         $extra_charges_id = 'woocommerce_'.$current_gateway_id.'_extra_charges';
         $extra_charges_type = $extra_charges_id.'_type';
-        $extra_charges = (float)get_option( $extra_charges_id);
+        $extra_charges = get_option( $extra_charges_id);
         $extra_charges_type_value = get_option( $extra_charges_type); 
         if($extra_charges){
+            $original_price = $totals -> cart_contents_total;
             if($extra_charges_type_value=="percentage"){
-                $totals -> cart_contents_total = $totals -> cart_contents_total + round(($totals -> cart_contents_total*$extra_charges)/100);
-            }else{
-                $totals -> cart_contents_total = $totals -> cart_contents_total + $extra_charges;
+                $totals -> cart_contents_total = $original_price + round(($original_price*(float)$extra_charges)/100);
+            }else if($extra_charges_type_value=="add") {
+                $totals -> cart_contents_total = $original_price + (float)$extra_charges;
+            } else if($extra_charges_type_value=="compensatePercentagePlusFixed") {
+                $extra_charges_parts = explode('|', $extra_charges);
+                $percentage = (float)trim($extra_charges_parts[0]);	//e.g. 3.4
+                $fixedCost = (float)trim($extra_charges_parts[1]);	//e.g. 0.35
+                //E.g. Paypal keeps +3.4% +0.35 fixed:
+                // received_amount = payed - (payed * 0.034 + 0.35)
+                // <=> received_amount = 0.966*payed - 0.35
+                // <=> (received_amount + 0.35)/0.966 = payed
+                $totals -> cart_contents_total = ($original_price + $fixedCost)/(1-$percentage/100);
             }
             $this -> current_gateway_title = $current_gateway -> title;
-            $this -> current_gateway_extra_charges = $extra_charges;
+            $this -> current_gateway_extra_charges = ($totals -> cart_contents_total - $original_price);
             $this -> current_gateway_extra_charges_type_value = $extra_charges_type_value;
             add_action( 'woocommerce_review_order_before_order_total',  array( $this, 'add_payment_gateway_extra_charges_row'));
 
@@ -129,11 +142,7 @@ function add_payment_gateway_extra_charges_row(){
     ?>
     <tr class="payment-extra-charge">
         <th><?php echo $this->current_gateway_title?> Extra Charges</th>
-        <td><?php if($this->current_gateway_extra_charges_type_value=="percentage"){
-            echo $this -> current_gateway_extra_charges.'%';
-        }else{
-         echo woocommerce_price($this -> current_gateway_extra_charges);
-     }?></td>
+        <td><?=woocommerce_price($this -> current_gateway_extra_charges)?></td>
  </tr>
  <?php
 }
